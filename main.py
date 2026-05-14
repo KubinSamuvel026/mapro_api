@@ -1,43 +1,73 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from transformers import pipeline
-
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, engine
 from models import EmotionHistory, User
 from database import Base
 
+import requests
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-emotion_model = pipeline(
-    "text-classification",
-    model="j-hartmann/emotion-english-distilroberta-base",
-    top_k=1
+import os
+
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+
+API_URL = (
+    "https://api-inference.huggingface.co/models/"
+    "j-hartmann/emotion-english-distilroberta-base"
 )
+
+headers = {
+    "Authorization": f"Bearer {HF_TOKEN}"
+}
+
+
 class RegisterUser(BaseModel):
 
     name: str
+    email: str
+    password: str
+
+
+class LoginUser(BaseModel):
 
     email: str
-
     password: str
+
+
 class UserText(BaseModel):
+
     text: str
+
 
 @app.post("/predict")
 def predict(data: UserText):
 
-    result = emotion_model(data.text)
+    payload = {
+        "inputs": data.text
+    }
+
+    response = requests.post(
+        API_URL,
+        headers=headers,
+        json=payload
+    )
+
+    result = response.json()
 
     emotion = result[0][0]["label"]
 
     confidence = result[0][0]["score"]
 
-    motivation = "Stay positive and keep moving forward."
+    motivation = (
+        "Stay positive and keep moving forward."
+    )
 
     if emotion == "sadness":
 
@@ -83,6 +113,8 @@ def predict(data: UserText):
         "confidence": round(confidence * 100, 2),
         "motivation": motivation
     }
+
+
 @app.get("/history")
 def get_history():
 
@@ -102,6 +134,8 @@ def get_history():
         })
 
     return data
+
+
 @app.get("/analytics")
 def analytics():
 
@@ -126,6 +160,8 @@ def analytics():
             analytics_data[emotion] += 1
 
     return analytics_data
+
+
 @app.post("/register")
 def register(user: RegisterUser):
 
@@ -154,11 +190,6 @@ def register(user: RegisterUser):
     return {
         "message": "Registration successful"
     }
-class LoginUser(BaseModel):
-
-    email: str
-
-    password: str
 
 
 @app.post("/login")
