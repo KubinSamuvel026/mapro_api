@@ -8,15 +8,13 @@ from models import EmotionHistory, User
 from database import Base
 
 import requests
+import os
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-import os
-
 HF_TOKEN = os.getenv("HF_TOKEN")
-
 
 API_URL = (
     "https://api-inference.huggingface.co/models/"
@@ -60,6 +58,14 @@ def predict(data: UserText):
     )
 
     result = response.json()
+
+    if isinstance(result, dict) and result.get("error"):
+
+        return {
+            "emotion": "unknown",
+            "confidence": 0,
+            "motivation": result["error"]
+        }
 
     emotion = result[0][0]["label"]
 
