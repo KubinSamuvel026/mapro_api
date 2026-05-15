@@ -43,84 +43,72 @@ class UserText(BaseModel):
 
     text: str
 
+from fastapi import HTTPException
 
 @app.post("/predict")
-def predict(data: UserText):
+def predict(data: TextInput):
+    try:
+        text = data.text
 
-    payload = {
-        "inputs": data.text
-    }
+        response = requests.post(
+            API_URL,
+            json={"inputs": text},
+            headers=HEADERS,
+            timeout=20,
+        )
 
-    response = requests.post(
-        API_URL,
-        headers=headers,
-        json=payload
-    )
+        print("STATUS:", response.status_code)
+        print("TEXT:", response.text)
 
-    result = response.json()
+        # Check failed response
+        if response.status_code != 200:
+            return {
+                "emotion": "neutral",
+                "confidence": 0,
+                "motivation": "Model API temporarily unavailable",
+            }
 
-    if isinstance(result, dict) and result.get("error"):
+        # Safe JSON parsing
+        try:
+            result = response.json()
+        except Exception:
+            return {
+                "emotion": "neutral",
+                "confidence": 0,
+                "motivation": "Invalid API response",
+            }
+
+        print("RESULT:", result)
+
+        # Adjust according to your model response
+        if isinstance(result, list) and len(result) > 0:
+            prediction = result[0]
+
+            emotion = prediction.get("label", "neutral")
+            confidence = round(
+                prediction.get("score", 0) * 100,
+                2,
+            )
+
+            return {
+                "emotion": emotion,
+                "confidence": confidence,
+                "motivation": f"You seem {emotion}. Stay strong.",
+            }
 
         return {
-            "emotion": "unknown",
+            "emotion": "neutral",
             "confidence": 0,
-            "motivation": result["error"]
+            "motivation": "Could not analyze emotion",
         }
 
-    emotion = result[0][0]["label"]
+    except Exception as e:
+        print("FULL ERROR:", str(e))
 
-    confidence = result[0][0]["score"]
-
-    motivation = (
-        "Stay positive and keep moving forward."
-    )
-
-    if emotion == "sadness":
-
-        motivation = (
-            "You are stronger than your current thoughts. "
-            "Take one small step today."
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
         )
-
-    elif emotion == "fear":
-
-        motivation = (
-            "Fear does not define your future. "
-            "Take things one step at a time."
-        )
-
-    elif emotion == "anger":
-
-        motivation = (
-            "Take a pause and breathe slowly. "
-            "Your feelings are temporary."
-        )
-
-    elif emotion == "joy":
-
-        motivation = (
-            "Keep enjoying the positive moments in your life."
-        )
-
-    db: Session = SessionLocal()
-
-    new_record = EmotionHistory(
-        text=data.text,
-        emotion=emotion,
-        confidence=confidence
-    )
-
-    db.add(new_record)
-
-    db.commit()
-
-    return {
-        "emotion": emotion,
-        "confidence": round(confidence * 100, 2),
-        "motivation": motivation
-    }
-
-
 @app.get("/history")
 def get_history():
 
