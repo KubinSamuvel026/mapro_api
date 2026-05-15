@@ -62,14 +62,39 @@ def get_motivation(emotion):
         "Stay strong. Every feeling matters."
     )
 
-
 @app.post("/predict")
-def predict(data: TextInput):
-
-    text = data.text
+def predict(data: UserText):
 
     try:
-        result = emotion_classifier(text)
+        text = data.text
+
+        response = requests.post(
+            API_URL,
+            headers=headers,
+            json={
+                "inputs": text
+            },
+            timeout=30
+        )
+
+        print("STATUS:", response.status_code)
+        print("RESPONSE:", response.text)
+
+        if response.status_code != 200:
+            return {
+                "emotion": "neutral",
+                "confidence": 0,
+                "motivation": "AI service busy. Try again."
+            }
+
+        result = response.json()
+
+        if not result or not isinstance(result, list):
+            return {
+                "emotion": "neutral",
+                "confidence": 0,
+                "motivation": "Could not analyze emotion."
+            }
 
         predictions = result[0]
 
@@ -78,24 +103,46 @@ def predict(data: TextInput):
             key=lambda x: x["score"]
         )
 
-        emotion = best_prediction["label"].lower()
-
+        emotion = best_prediction["label"]
         confidence = round(
             best_prediction["score"] * 100,
             2
         )
 
-        motivation = get_motivation(emotion)
+        motivation_map = {
+            "joy":
+                "You seem happy today. Keep spreading positivity and enjoy the moment.",
+
+            "sadness":
+                "It’s okay to feel sad. Better days will come. Be gentle with yourself.",
+
+            "anger":
+                "Take a deep breath. Calmness helps create better solutions.",
+
+            "fear":
+                "You are stronger than your worries. Take one step at a time.",
+
+            "surprise":
+                "Unexpected moments can create new opportunities.",
+
+            "neutral":
+                "You seem calm today. Keep moving forward."
+        }
+
+        motivation = motivation_map.get(
+            emotion.lower(),
+            "Stay strong. You can handle this."
+        )
 
         db: Session = SessionLocal()
 
-        new_record = EmotionHistory(
+        history = EmotionHistory(
             text=text,
             emotion=emotion,
             confidence=best_prediction["score"]
         )
 
-        db.add(new_record)
+        db.add(history)
         db.commit()
 
         return {
@@ -105,12 +152,13 @@ def predict(data: TextInput):
         }
 
     except Exception as e:
+        print("ERROR:", str(e))
+
         return {
             "emotion": "neutral",
             "confidence": 0,
             "motivation": f"Error: {str(e)}"
         }
-
 
 @app.get("/history")
 def get_history():
