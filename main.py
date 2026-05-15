@@ -3,19 +3,23 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
 from models import EmotionHistory, User
-
-from transformers import pipeline
+import requests
+import os
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# Load model once
-emotion_classifier = pipeline(
-    "text-classification",
-    model="j-hartmann/emotion-english-distilroberta-base",
-    top_k=None
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+API_URL = (
+    "https://api-inference.huggingface.co/models/"
+    "j-hartmann/emotion-english-distilroberta-base"
 )
+
+headers = {
+    "Authorization": f"Bearer {HF_TOKEN}"
+}
 
 
 class RegisterUser(BaseModel):
@@ -29,38 +33,37 @@ class LoginUser(BaseModel):
     password: str
 
 
-class TextInput(BaseModel):
+class UserText(BaseModel):
     text: str
 
 
 def get_motivation(emotion):
-    motivation = {
+
+    motivation_map = {
         "joy":
-            "You seem happy today. Keep enjoying the moment and spread positivity.",
+            "You seem happy today. Keep spreading positivity and enjoy the moment.",
 
         "sadness":
-            "Hard times pass. Be patient with yourself and remember brighter days come.",
+            "It’s okay to feel sad. Better days will come. Be gentle with yourself.",
 
         "anger":
-            "Pause for a moment. Calmness helps make better decisions than anger.",
+            "Take a deep breath. Calmness helps create better solutions.",
 
         "fear":
-            "You are stronger than your worries. Take things one step at a time.",
+            "You are stronger than your worries. Take one step at a time.",
 
         "surprise":
-            "Unexpected moments can bring growth. Stay open and adaptable.",
-
-        "disgust":
-            "Not every experience feels good, but every experience teaches something.",
+            "Unexpected moments can create new opportunities.",
 
         "neutral":
-            "You seem balanced today. Keep taking care of yourself."
+            "You seem calm today. Keep moving forward."
     }
 
-    return motivation.get(
+    return motivation_map.get(
         emotion.lower(),
-        "Stay strong. Every feeling matters."
+        "Stay strong. You can handle this."
     )
+
 
 @app.post("/predict")
 def predict(data: UserText):
@@ -71,14 +74,12 @@ def predict(data: UserText):
         response = requests.post(
             API_URL,
             headers=headers,
-            json={
-                "inputs": text
-            },
+            json={"inputs": text},
             timeout=30
         )
 
-        print("STATUS:", response.status_code)
-        print("RESPONSE:", response.text)
+        print("HF STATUS:", response.status_code)
+        print("HF RESPONSE:", response.text)
 
         if response.status_code != 200:
             return {
@@ -89,13 +90,6 @@ def predict(data: UserText):
 
         result = response.json()
 
-        if not result or not isinstance(result, list):
-            return {
-                "emotion": "neutral",
-                "confidence": 0,
-                "motivation": "Could not analyze emotion."
-            }
-
         predictions = result[0]
 
         best_prediction = max(
@@ -104,35 +98,13 @@ def predict(data: UserText):
         )
 
         emotion = best_prediction["label"]
+
         confidence = round(
             best_prediction["score"] * 100,
             2
         )
 
-        motivation_map = {
-            "joy":
-                "You seem happy today. Keep spreading positivity and enjoy the moment.",
-
-            "sadness":
-                "It’s okay to feel sad. Better days will come. Be gentle with yourself.",
-
-            "anger":
-                "Take a deep breath. Calmness helps create better solutions.",
-
-            "fear":
-                "You are stronger than your worries. Take one step at a time.",
-
-            "surprise":
-                "Unexpected moments can create new opportunities.",
-
-            "neutral":
-                "You seem calm today. Keep moving forward."
-        }
-
-        motivation = motivation_map.get(
-            emotion.lower(),
-            "Stay strong. You can handle this."
-        )
+        motivation = get_motivation(emotion)
 
         db: Session = SessionLocal()
 
@@ -152,13 +124,15 @@ def predict(data: UserText):
         }
 
     except Exception as e:
+
         print("ERROR:", str(e))
 
         return {
             "emotion": "neutral",
             "confidence": 0,
-            "motivation": f"Error: {str(e)}"
+            "motivation": str(e)
         }
+
 
 @app.get("/history")
 def get_history():
@@ -211,52 +185,3 @@ def analytics():
             analytics_data[emotion] += 1
 
     return analytics_data
-
-
-@app.post("/register")
-def register(user: RegisterUser):
-
-    db: Session = SessionLocal()
-
-    existing_user = db.query(User).filter(
-        User.email == user.email
-    ).first()
-
-    if existing_user:
-        return {
-            "message": "Email already exists"
-        }
-
-    new_user = User(
-        name=user.name,
-        email=user.email,
-        password=user.password
-    )
-
-    db.add(new_user)
-    db.commit()
-
-    return {
-        "message": "Registration successful"
-    }
-
-
-@app.post("/login")
-def login(user: LoginUser):
-
-    db: Session = SessionLocal()
-
-    existing_user = db.query(User).filter(
-        User.email == user.email,
-        User.password == user.password
-    ).first()
-
-    if not existing_user:
-        return {
-            "message": "Invalid credentials"
-        }
-
-    return {
-        "message": "Login successful",
-        "name": existing_user.name
-    }
