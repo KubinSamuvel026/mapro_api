@@ -84,19 +84,18 @@ def get_motivation(emotion):
 # ─────────────────────────────────────────
 @app.post("/predict")
 def predict(data: TextInput):
-
     try:
         text = data.text
 
         response = requests.post(
-            API_URL,
-            json={"inputs": text},
-            headers=HEADERS,
-            timeout=20,
+        API_URL,
+        json={"inputs": text},
+        headers=HEADERS,
+        timeout=20,
         )
 
-        print("STATUS:", response.status_code)
-        print("TEXT:", response.text)
+        print("HF STATUS:", response.status_code)
+        print("HF RESPONSE:", response.text)
 
         if response.status_code != 200:
             return {
@@ -162,8 +161,7 @@ def predict(data: TextInput):
             status_code=500,
             detail=str(e)
         )
-
-
+    
 # ─────────────────────────────────────────
 # HISTORY
 # ─────────────────────────────────────────
