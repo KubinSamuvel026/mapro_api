@@ -1,35 +1,23 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine, Base
 from models import EmotionHistory, User
-import requests
-import os
 
-# ─────────────────────────────────────────
-# DATABASE
-# ─────────────────────────────────────────
+from transformers import pipeline
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# ─────────────────────────────────────────
-# HUGGING FACE CONFIG
-# ─────────────────────────────────────────
-HF_TOKEN = os.getenv("HF_TOKEN")
-
-API_URL = (
-    "https://api-inference.huggingface.co/models/"
-    "j-hartmann/emotion-english-distilroberta-base"
+# Load model once
+emotion_classifier = pipeline(
+    "text-classification",
+    model="j-hartmann/emotion-english-distilroberta-base",
+    top_k=None
 )
 
-HEADERS = {
-    "Authorization": f"Bearer {HF_TOKEN}"
-}
 
-# ─────────────────────────────────────────
-# MODELS
-# ─────────────────────────────────────────
 class RegisterUser(BaseModel):
     name: str
     email: str
@@ -45,126 +33,85 @@ class TextInput(BaseModel):
     text: str
 
 
-# ─────────────────────────────────────────
-# MOTIVATION FUNCTION
-# ─────────────────────────────────────────
 def get_motivation(emotion):
-
-    motivation_dict = {
+    motivation = {
         "joy":
-            "You seem happy today. Keep spreading positivity and enjoy this beautiful moment in your life.",
+            "You seem happy today. Keep enjoying the moment and spread positivity.",
 
         "sadness":
-            "It’s okay to feel sad sometimes. Tough times never stay forever. Be kind to yourself.",
+            "Hard times pass. Be patient with yourself and remember brighter days come.",
 
         "anger":
-            "Take a deep breath. Your emotions are valid, but peace gives better solutions than anger.",
+            "Pause for a moment. Calmness helps make better decisions than anger.",
 
         "fear":
-            "Fear is temporary. You are stronger than your worries. Take one step at a time.",
+            "You are stronger than your worries. Take things one step at a time.",
 
         "surprise":
-            "Life is full of unexpected moments. Stay open and trust your ability to adapt.",
+            "Unexpected moments can bring growth. Stay open and adaptable.",
 
         "disgust":
-            "Some situations are uncomfortable, but they help us understand what truly matters.",
+            "Not every experience feels good, but every experience teaches something.",
 
         "neutral":
-            "You seem calm today. Take care of yourself and keep moving forward."
+            "You seem balanced today. Keep taking care of yourself."
     }
 
-    return motivation_dict.get(
+    return motivation.get(
         emotion.lower(),
-        "Stay positive. Every emotion teaches something important."
+        "Stay strong. Every feeling matters."
     )
 
 
-# ─────────────────────────────────────────
-# PREDICT EMOTION
-# ─────────────────────────────────────────
 @app.post("/predict")
 def predict(data: TextInput):
-    try:
-        text = data.text
 
-        response = requests.post(
-        API_URL,
-        json={"inputs": text},
-        headers=HEADERS,
-        timeout=20,
+    text = data.text
+
+    try:
+        result = emotion_classifier(text)
+
+        predictions = result[0]
+
+        best_prediction = max(
+            predictions,
+            key=lambda x: x["score"]
         )
 
-        print("HF STATUS:", response.status_code)
-        print("HF RESPONSE:", response.text)
+        emotion = best_prediction["label"].lower()
 
-        if response.status_code != 200:
-            return {
-                "emotion": "neutral",
-                "confidence": 0,
-                "motivation": "Emotion service temporarily unavailable"
-            }
+        confidence = round(
+            best_prediction["score"] * 100,
+            2
+        )
 
-        try:
-            result = response.json()
-        except Exception:
-            return {
-                "emotion": "neutral",
-                "confidence": 0,
-                "motivation": "Could not process emotion"
-            }
+        motivation = get_motivation(emotion)
 
-        print("RESULT:", result)
+        db: Session = SessionLocal()
 
-        if isinstance(result, list) and len(result) > 0:
+        new_record = EmotionHistory(
+            text=text,
+            emotion=emotion,
+            confidence=best_prediction["score"]
+        )
 
-            prediction = max(
-                result[0],
-                key=lambda x: x["score"]
-            )
-
-            emotion = prediction["label"]
-            confidence = round(
-                prediction["score"] * 100,
-                2
-            )
-
-            motivation = get_motivation(emotion)
-
-            # Save history
-            db: Session = SessionLocal()
-
-            new_record = EmotionHistory(
-                text=text,
-                emotion=emotion,
-                confidence=prediction["score"]
-            )
-
-            db.add(new_record)
-            db.commit()
-
-            return {
-                "emotion": emotion,
-                "confidence": confidence,
-                "motivation": motivation
-            }
+        db.add(new_record)
+        db.commit()
 
         return {
-            "emotion": "neutral",
-            "confidence": 0,
-            "motivation": "Could not analyze emotion"
+            "emotion": emotion,
+            "confidence": confidence,
+            "motivation": motivation
         }
 
     except Exception as e:
-        print("FULL ERROR:", str(e))
+        return {
+            "emotion": "neutral",
+            "confidence": 0,
+            "motivation": f"Error: {str(e)}"
+        }
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-    
-# ─────────────────────────────────────────
-# HISTORY
-# ─────────────────────────────────────────
+
 @app.get("/history")
 def get_history():
 
@@ -190,9 +137,6 @@ def get_history():
     return data
 
 
-# ─────────────────────────────────────────
-# ANALYTICS
-# ─────────────────────────────────────────
 @app.get("/analytics")
 def analytics():
 
@@ -221,9 +165,6 @@ def analytics():
     return analytics_data
 
 
-# ─────────────────────────────────────────
-# REGISTER
-# ─────────────────────────────────────────
 @app.post("/register")
 def register(user: RegisterUser):
 
@@ -252,9 +193,6 @@ def register(user: RegisterUser):
     }
 
 
-# ─────────────────────────────────────────
-# LOGIN
-# ─────────────────────────────────────────
 @app.post("/login")
 def login(user: LoginUser):
 
